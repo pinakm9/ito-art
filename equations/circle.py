@@ -14,7 +14,7 @@ import numpy as np
 
 # set parameters
 np_dtype = np.float64
-beta = 100.0
+beta = 20.0
 s = np.sqrt(2.0/beta)
 
 
@@ -28,4 +28,4 @@ def sigma(t, X_t):
     return s 
 
 def get_sde():
-    return sde.SDE(space_dim=2, mu=mu, sigma=sigma, name='circle')
+    return sde.SDE(space_dim=2, mu=mu, sigma=sigma, name='circle'), (1000, 1e-4, 1), (300, 1e-1, 1)
