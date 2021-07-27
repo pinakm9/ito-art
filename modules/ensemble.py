@@ -1,8 +1,9 @@
 import cv2
 import numpy as np
+from numpy.core.fromnumeric import partition
 import tables
 import matplotlib.pyplot as plt
-import shutil, os
+import shutil, os, copy
 import utility as ut
 
 class Ensemble:
@@ -29,6 +30,7 @@ class Ensemble:
         self.motion_path = self.record_path + '/{}_to_{}.h5'.format(self.img_name, self.sde.name)
         if not os.path.isdir(record_path):
             os.mkdir(record_path)
+        self.color_palette = np.array(['#ff6f69', '#00b159', '#eb6841', '#0e9aa7', '#ffea04'])
 
     def rotate(self, angle):
         """
@@ -58,8 +60,12 @@ class Ensemble:
                 if img[i, j] < threshold:
                     self.particles.append([i/img.shape[0], j/img.shape[1]])
         self.rotate(3.0 * np.pi / 2.0)
+        if max_particles > len(self.particles):
+            max_particles = len(self.particles)
         idx = np.random.choice(len(self.particles), size=max_particles, replace=False)
         self.particles = self.particles[idx]
+        self.set_colors()
+        
 
     def move(self, begin_specs, end_specs):
         """
@@ -72,6 +78,45 @@ class Ensemble:
         """
         self.frames = self.sde.evolve(self.particles, self.motion_path, begin_specs, end_specs)
 
+
+    def set_colors(self, mode='radial'):
+        """
+        Description:
+            assigns colors to particles from the color palette
+
+        Args:
+            mode: 'vertical' or 'horizontal' or 'radial' deciding color assignment on the last frame
+        """
+        d = (1.0 - (-1.0)) / len(self.color_palette)
+        self.colors = np.zeros(len(self.particles), dtype=np.int32)
+        if mode == 'radial':
+            particles = copy.deepcopy(self.particles)
+            for i, c in enumerate(self.color_palette):
+                box = (i+1) * np.array([[-d/2., d/2.], [-d/2., d/2.]])
+                idx = self.in_box(box, particles)
+                particles[idx] = [[np.nan, np.nan]] * len(idx)
+                self.colors[idx] = [i] * len(idx)
+        self.colors = self.color_palette[self.colors]
+    
+
+    def in_box(self, box, particles):
+        """
+        Description:
+            find out which particles are inside the given box
+
+        Args:
+            box: the bounding box as 2x2 matrix
+            particles: particles to check containment for
+
+        Returns:
+            indices of the contained particles
+        """
+        idx = []
+        for i, p in enumerate(particles):
+            if box[0][0] <= p[0] <= box[0][1] and box[1][0] <= p[1] <= box[1][1]:
+                idx.append(i)
+        return idx
+    
     @ut.timer
     def animate(self, num_frames):
         """
@@ -88,17 +133,20 @@ class Ensemble:
         if not os.path.isdir(frames_folder):
             os.mkdir(frames_folder)
         
-        fig = plt.figure(figsize=(10, 10))
+        fig = plt.figure(figsize=(8, 8), frameon=False)
         ax = fig.add_subplot(111) 
-        
+        fig.patch.set_visible(False)
+        ax.axes.xaxis.set_visible(False)
+        ax.axes.yaxis.set_visible(False)
+        #ax.set_aspect(1)
         def update_plot(frame):
             ax.clear()
             # read data to plot
             ensemble = getattr(motion.root.ensemble, 'time_' + str(frame)).read()
             if self.dim == 2:
-                ax.scatter(ensemble[:, 0], ensemble[:, 1])
+                ax.scatter(ensemble[:, 0], ensemble[:, 1], c=self.colors)
             else:
-                ax.scatter(ensemble[:, 0], ensemble[:, 1], ensemble[:, 2], c='b', s=3.0)
+                ax.scatter(ensemble[:, 0], ensemble[:, 1], ensemble[:, 2], c=self.colors, s=3.0)
             """
             ax.set_title('time = {:.2f}'.format(frame * self.time_step))
             ax.set_xlabel('x')
@@ -112,8 +160,7 @@ class Ensemble:
                 if ax_lims[2] is not None:
                     ax.set_xlim(ax_lims[2])
             """
-            ax.axes.xaxis.set_visible(False)
-            ax.axes.yaxis.set_visible(False)
+            plt.tight_layout()
             plt.savefig(frames_folder + '/frame_{}.png'.format(frame))
             print('Frame {} has been drawn.'.format(frame), end='\r')
             
@@ -122,7 +169,7 @@ class Ensemble:
 
         height, width, _ = cv2.imread(frames_folder + '/frame_0.png').shape
         video_path = self.record_path + '/{}_to_{}'.format(self.img_name, self.sde.name) + '.mp4'
-        video = cv2.VideoWriter(video_path, fourcc = cv2.VideoWriter_fourcc(*'mp4v'), frameSize=(width,height), fps=24)
+        video = cv2.VideoWriter(video_path, fourcc = cv2.VideoWriter_fourcc(*'mp4v'), frameSize=(width,height), fps=60)
         for frame in self.frames[::-1]:
             video.write(cv2.imread(frames_folder + '/frame_{}.png'.format(frame)))
         cv2.destroyAllWindows()
