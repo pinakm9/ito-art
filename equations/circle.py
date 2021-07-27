@@ -28,4 +28,4 @@ def sigma(t, X_t):
     return s 
 
 def get_sde():
-    return sde.SDE(space_dim=2, mu=mu, sigma=sigma, name='circle'), (2500, 1e-4, 1), (500, 1e-1, 1)
+    return sde.SDE(space_dim=2, mu=mu, sigma=sigma, name='circle'), [(2500, 4e-4, 1), (300, 1e-1, 1), (200, 1e-3, 1)]

@@ -67,16 +67,15 @@ class Ensemble:
         self.set_colors()
         
 
-    def move(self, begin_specs, end_specs):
+    def move(self, specs):
         """
         Description:
             moves the particles according to the given SDE and saves the motion data in a .h5 file
 
         Args:
-            begin_specs: 3-tuple specifying how to move forward and save in the beginning (num_frames, time_step, save_gap)
-            end_specs: 3-tuple specifying how to move forward and save in the end (num_frames, time_step, save_gap)
+            specs: list of 3-tuples specifying how to move forward and save, (num_frames, time_step, save_gap)
         """
-        self.frames = self.sde.evolve(self.particles, self.motion_path, begin_specs, end_specs)
+        self.frames = self.sde.evolve(self.particles, self.motion_path, specs)
 
 
     def set_colors(self, mode='radial'):
