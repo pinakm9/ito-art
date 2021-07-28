@@ -3,8 +3,9 @@ import numpy as np
 from numpy.core.fromnumeric import partition
 import tables
 import matplotlib.pyplot as plt
-import shutil, os, copy
+import shutil, os, copy, ffmpeg
 import utility as ut
+from sklearn.preprocessing import normalize
 
 class Ensemble:
     """
@@ -31,6 +32,7 @@ class Ensemble:
         if not os.path.isdir(record_path):
             os.mkdir(record_path)
         self.color_palette = np.array(['#ff6f69', '#00b159', '#eb6841', '#0e9aa7', '#ffea04'])
+        self.video_path = self.record_path + '/{}_to_{}'.format(self.img_name, self.sde.name) + '.mp4'
 
     def rotate(self, angle):
         """
@@ -43,7 +45,7 @@ class Ensemble:
         R = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
         self.particles = np.array([R @ particle for particle in self.particles])
 
-    def get_dark_pixels(self, threshold, max_particles=2000):
+    def get_dark_pixels(self, threshold, max_particles=2000, mode='vertical', rep=2):
         """
         Description:
             extracts real-valued coordinates of the darker pixels in the final frame of the animation
@@ -51,6 +53,8 @@ class Ensemble:
         Args:
             threshold: integer threshold to determine if a pixel is dark
             max_particles: maximum number of pixels to select
+            mode: mode for color selection
+            rep:  number of repitions of palette
         """
         img = cv2.imread(self.img_path)
         img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
@@ -58,14 +62,43 @@ class Ensemble:
         for i in range(img.shape[0]):
             for j in range(img.shape[1]):
                 if img[i, j] < threshold:
-                    self.particles.append([i/img.shape[0], j/img.shape[1]])
+                    self.particles.append([i, j])
+        
+        # rotate to fix weird pixel designation
         self.rotate(3.0 * np.pi / 2.0)
+
+        # normmalize coordinates to (-1, 1)
+        b, a = max(self.particles[:, 0]), min(self.particles[:, 0])
+        p, q = 2.0 / (b-a), -(b+a) / (b-a) 
+        self.particles[:, 0] = p*self.particles[:, 0] + q
+
+        b, a = max(self.particles[:, 1]), min(self.particles[:, 1])
+        p, q = 2.0 / (b-a), -(b+a) / (b-a) 
+        self.particles[:, 1] = p*self.particles[:, 1] + q
+        
+
         if max_particles > len(self.particles):
             max_particles = len(self.particles)
         idx = np.random.choice(len(self.particles), size=max_particles, replace=False)
         self.particles = self.particles[idx]
-        self.set_colors()
+        self.set_colors(mode, rep)
         
+
+    def set_frames(self, specs):
+        """
+        Description:
+            sets frames using specs 
+
+        Args:
+            specs: list of 3-tuples specifying how to move forward and save, (num_frames, time_step, save_gap)
+        """
+        self.frames = [0]
+        offset = 0
+        for spec in specs:
+            num_steps, time_step, save_gap = spec
+            self.frames += [step + 1 + offset for step in range(num_steps)]
+            offset += spec[0]
+
 
     def move(self, specs):
         """
@@ -78,24 +111,42 @@ class Ensemble:
         self.frames = self.sde.evolve(self.particles, self.motion_path, specs)
 
 
-    def set_colors(self, mode='radial'):
+    def set_colors(self, mode='vertical', rep=2):
         """
         Description:
             assigns colors to particles from the color palette
 
         Args:
             mode: 'vertical' or 'horizontal' or 'radial' deciding color assignment on the last frame
+            rep: number of repitions of palette
         """
-        d = (1.0 - (-1.0)) / len(self.color_palette)
+        
         self.colors = np.zeros(len(self.particles), dtype=np.int32)
-        if mode == 'radial':
-            particles = copy.deepcopy(self.particles)
-            for i, c in enumerate(self.color_palette):
+        particles = copy.deepcopy(self.particles)
+        # prepare repeated palette
+        palette = list(range(len(self.color_palette)))
+        # set detection method
+        for _ in range(rep-1):
+            palette += list(range(len(self.color_palette)))
+        if mode == 'vertical':
+            detect = self.in_horz_strip
+        elif mode == 'horizontal':
+            detect = self.in_vert_strip
+        elif mode == 'radial':
+            detect = self.in_box
+        # set colors
+        d = 2.0 / len(palette)
+        for i, c in enumerate(palette):
+            if mode == 'vertical' or mode == 'horizontal':
+                strip = [-1 + i*d, -1 + (i+1) * d]
+                idx = detect(strip, particles)
+            elif mode == 'radial':
                 box = (i+1) * np.array([[-d/2., d/2.], [-d/2., d/2.]])
-                idx = self.in_box(box, particles)
-                if len(idx) > 0:
-                    particles[idx] = [[np.nan, np.nan]] * len(idx)
-                    self.colors[idx] = [i] * len(idx)
+                idx = detect(box, particles)
+            if len(idx) > 0:
+                particles[idx] = [[np.nan, np.nan]] * len(idx)
+                self.colors[idx] = [c] * len(idx)
+
         self.colors = self.color_palette[self.colors]
     
 
@@ -113,18 +164,58 @@ class Ensemble:
         """
         idx = []
         for i, p in enumerate(particles):
-            if box[0][0] <= p[0] <= box[0][1] and box[1][0] <= p[1] <= box[1][1]:
+            if box[0, 0] <= p[0] <= box[0, 1] and box[1, 0] <= p[1] <= box[1, 1]:
+                idx.append(i)
+        return idx 
+
+    def in_horz_strip(self, strip, particles):
+        """
+        Description:
+            find out which particles are inside the given horizontal strip
+
+        Args:
+            strip: 2-tuple representing the horizontal strip
+            particles: particles to check containment for
+
+        Returns:
+            indices of the contained particles
+        """
+        idx = []
+        for i, p in enumerate(particles):
+            if strip[0] <= p[1] <= strip[1]:
                 idx.append(i)
         return idx
     
+    def in_vert_strip(self, strip, particles):
+        """
+        Description:
+            find out which particles are inside the given vertical strip
+
+        Args:
+            strip: 2-tuple representing the vertical strip
+            particles: particles to check containment for
+
+        Returns:
+            indices of the contained particles
+        """
+        idx = []
+        for i, p in enumerate(particles):
+            if strip[0] <= p[0] <= strip[1]:
+                idx.append(i)
+        return idx
+
+
     @ut.timer
-    def animate(self, fps=24):
+    def animate(self, fps=24, pt_size=10, repeat_end=True, end_duration=2):
         """
         Description:
             uses backward motion to create animation and saves it as a gif
         
         Args:
-            num_frames: number of frames to keep in the animation
+            fps: frames per second
+            pt_size: size of points in scatter plot
+            repeat_end: indicator for repeating the last frame
+            end_duration: duration of the last frame
         """
         motion = tables.open_file(self.motion_path, 'r')
         _, self.time_step, self.ensemble_size, self.dim = motion.root.config.read()[0]
@@ -133,20 +224,20 @@ class Ensemble:
         if not os.path.isdir(frames_folder):
             os.mkdir(frames_folder)
         
-        fig = plt.figure(figsize=(8, 8), frameon=False)
+        fig = plt.figure(figsize=(6, 6), frameon=False)
         ax = fig.add_subplot(111) 
         fig.patch.set_visible(False)
         ax.axes.xaxis.set_visible(False)
         ax.axes.yaxis.set_visible(False)
         #ax.set_aspect(1)
-        def update_plot(frame):
+        def update_plot(frame, id):
             ax.clear()
             # read data to plot
             ensemble = getattr(motion.root.ensemble, 'time_' + str(frame)).read()
             if self.dim == 2:
-                ax.scatter(ensemble[:, 0], ensemble[:, 1], c=self.colors)
+                ax.scatter(ensemble[:, 0], ensemble[:, 1], c=self.colors, s=pt_size)
             else:
-                ax.scatter(ensemble[:, 0], ensemble[:, 1], ensemble[:, 2], c=self.colors, s=3.0)
+                ax.scatter(ensemble[:, 0], ensemble[:, 1], ensemble[:, 2], c=self.colors, s=pt_size)
             """
             ax.set_title('time = {:.2f}'.format(frame * self.time_step))
             ax.set_xlabel('x')
@@ -161,21 +252,23 @@ class Ensemble:
                     ax.set_xlim(ax_lims[2])
             """
             plt.tight_layout()
-            plt.savefig(frames_folder + '/frame_{}.png'.format(frame))
+            plt.savefig(frames_folder + '/frame_{}.png'.format(id))
             print('Frame {} has been drawn.'.format(frame), end='\r')
             
-        for frame in self.frames:
-            update_plot(frame)
+        if repeat_end:
+            self.frames = [0] * (end_duration * fps) + self.frames
+        
+        for i, frame in enumerate(self.frames):
+            update_plot(frame, i)
 
         height, width, _ = cv2.imread(frames_folder + '/frame_0.png').shape
-        video_path = self.record_path + '/{}_to_{}'.format(self.img_name, self.sde.name) + '.mp4'
-        video = cv2.VideoWriter(video_path, fourcc = cv2.VideoWriter_fourcc(*'mp4v'), frameSize=(width,height), fps=fps)
+        #print(height, width)
+        video = cv2.VideoWriter(self.video_path, fourcc = cv2.VideoWriter_fourcc(*'mp4v'), frameSize=(width,height), fps=fps)
         for frame in self.frames[::-1]:
             video.write(cv2.imread(frames_folder + '/frame_{}.png'.format(frame)))
         cv2.destroyAllWindows()
         video.release()
         shutil.rmtree(frames_folder)
         motion.close()
-
 
         
