@@ -93,8 +93,9 @@ class Ensemble:
             for i, c in enumerate(self.color_palette):
                 box = (i+1) * np.array([[-d/2., d/2.], [-d/2., d/2.]])
                 idx = self.in_box(box, particles)
-                particles[idx] = [[np.nan, np.nan]] * len(idx)
-                self.colors[idx] = [i] * len(idx)
+                if len(idx) > 0:
+                    particles[idx] = [[np.nan, np.nan]] * len(idx)
+                    self.colors[idx] = [i] * len(idx)
         self.colors = self.color_palette[self.colors]
     
 
@@ -117,7 +118,7 @@ class Ensemble:
         return idx
     
     @ut.timer
-    def animate(self, num_frames):
+    def animate(self, fps=24):
         """
         Description:
             uses backward motion to create animation and saves it as a gif
@@ -168,7 +169,7 @@ class Ensemble:
 
         height, width, _ = cv2.imread(frames_folder + '/frame_0.png').shape
         video_path = self.record_path + '/{}_to_{}'.format(self.img_name, self.sde.name) + '.mp4'
-        video = cv2.VideoWriter(video_path, fourcc = cv2.VideoWriter_fourcc(*'mp4v'), frameSize=(width,height), fps=60)
+        video = cv2.VideoWriter(video_path, fourcc = cv2.VideoWriter_fourcc(*'mp4v'), frameSize=(width,height), fps=fps)
         for frame in self.frames[::-1]:
             video.write(cv2.imread(frames_folder + '/frame_{}.png'.format(frame)))
         cv2.destroyAllWindows()

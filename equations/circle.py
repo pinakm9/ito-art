@@ -20,12 +20,12 @@ s = np.sqrt(2.0/beta)
 
 # create an SDE object
 def mu(t, X_t):
-    x, y = X_t[:, 0], X_t[:, 1]
+    x, y = np.reshape(X_t[:, 0], (-1, 1)), np.reshape(X_t[:, 1], (-1, 1))
     z = 4.0 * (1.0 - x*x - y*y)
-    return np.array([x*z, y*z], dtype=np_dtype).T
+    return np.hstack([x*z, y*z])
 
 def sigma(t, X_t):
     return s 
 
 def get_sde():
-    return sde.SDE(space_dim=2, mu=mu, sigma=sigma, name='circle'), [(2500, 4e-4, 1), (300, 1e-1, 1), (200, 1e-3, 1)]
+    return sde.SDE(space_dim=2, mu=mu, sigma=sigma, name='circle'), [(300, 1e-5, 1), (300, 1e-3, 1), (300, 1e-2, 1), (600, 1e-1, 1), (300, 1e-3, 1), (300, 1e-4, 1)]#, (1000, 1e-1, 1), (200, 1e-3, 1)]

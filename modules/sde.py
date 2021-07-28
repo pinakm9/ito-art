@@ -49,10 +49,11 @@ class SDE:
         for spec in specs:
             num_steps, time_step, save_gap = spec
             noise_std = np.sqrt(time_step)
-            noise = np.random.normal(loc=0.0, scale=noise_std, size=(num_steps, self.num_particles, self.space_dim))
+            
             for step in range(num_steps):
             # evolve ensemble with Euler-Maruyama according to begin_specs
-                new_ensemble += self.mu(step*time_step, new_ensemble)*time_step + self.sigma(step*time_step, new_ensemble) * noise[step, :, :]
+                noise = np.random.normal(loc=0.0, scale=noise_std, size=(self.num_particles, self.space_dim))
+                new_ensemble += self.mu(step*time_step, new_ensemble)*time_step + self.sigma(step*time_step, new_ensemble) * noise
                 # record the new ensemble is necessary
                 if step % save_gap == 0:
                     hdf5.create_array(ens_folder, 'time_' + str(step + 1 + offset), new_ensemble)
